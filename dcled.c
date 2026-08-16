@@ -869,10 +869,12 @@ void printmsg(struct ledscreen *disp, char* msg) {
 	int numchars, start;
 	/* set pack to 0 if you want space between letters and only four chars per display. */
 	int pack = 1;
+	int charwidth = (disp->font->dispwidth)-pack;
+	int xoffset = 0;
 
 	clearscreen(0, disp);
 
-	numchars = LEDSX / ((disp->font->dispwidth)-pack);
+	numchars = LEDSX / charwidth;
 
 	start = strlen(msg);
 	if (start > 0) {
@@ -890,9 +892,19 @@ void printmsg(struct ledscreen *disp, char* msg) {
 	}
 	p = msg + start;
 
+	/* if nothing had to be trimmed off the front, the whole thing fits on
+	 * the screen at once- center it instead of jamming it against the left
+	 * edge. */
+	if (start == 0) {
+		xoffset = (LEDSX - (int)strlen(p)*charwidth) / 2;
+		if (xoffset < 0) {
+			xoffset = 0;
+		}
+	}
+
 	/* put 'em on the screen. */
 	while(*p != '\0') {
-		printchar(disp,*p, i*((disp->font->dispwidth)-pack));
+		printchar(disp,*p, xoffset + i*charwidth);
 		p++;
 		i++;
 	}
@@ -905,9 +917,19 @@ void printmsg(struct ledscreen *disp, char* msg) {
 		}
 		fflush(stdout);
 	}
-	send_screen(disp);
-	/* line print speed can be controlled with the --speed parameter */
-	usleep(disp->scrolldelay);
+	/* line print speed can be controlled with the --speed parameter.  The
+	 * device blanks itself if it isn't refreshed for about a second (see
+	 * send_screen()), so keep resending the frame instead of just
+	 * sleeping. */
+	{
+		int remaining = disp->scrolldelay;
+		const int refresh = 250000;
+		do {
+			send_screen(disp);
+			usleep(remaining < refresh ? remaining : refresh);
+			remaining -= refresh;
+		} while (remaining > 0);
+	}
 }
 
 

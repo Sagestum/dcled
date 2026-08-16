@@ -11,6 +11,28 @@ people contact my people and we'll work it out.
 Version 1.0 took ~12 hours to write, and was my first foray into usb device
 programming.  This is probably not a real good example of how to do ANYTHING.
 
+THIS FORK:
+
+libhid disappeared from Debian/Ubuntu over a decade ago, which made the
+original code unbuildable on any current distro. This fork replaces it with
+libusb-1.0, which does the same HID SET_REPORT control transfer libhid used
+to do under the hood- no behaviour change, just a dependency that still
+exists. Tested on a Raspberry Pi 4 running Debian 13 (trixie).
+
+Also fixed along the way:
+
+  * spiral() (the "-p spiral" preamble) used its row index before it was
+    ever initialized, which could write outside the display buffer.
+  * loadfont() kept going after a failed fopen() instead of returning,
+    which crashed on an unreadable .dlf file.
+  * The clock's colon has thinner dots (1x2 instead of 2x2)- the fatter
+    version looked like a doubled colon once you noticed it wiggling.
+  * --fastprint/-f (printmsg()) now centers a message that fits on the
+    screen instead of jamming it against the left edge, and keeps
+    resending the frame for the full --speed duration instead of just
+    sleeping- the board blanks itself if it isn't refreshed for about a
+    second, so a one-shot send used to make long --speed values pointless.
+
 Dcled runs on linux, and perhaps other operating systesm.  To use it, you need
 to have the usb hiddev loaded- on my system that seems to be the module named
 'usbhid', and it is loaded by default.  When you plug in the message board, the
@@ -26,9 +48,9 @@ id.
 
 BUILDING IT:
 
-As of dcled version 1.4, you are going to need a copy of the libhid-dev files
-in order to build dcled.  If you are running debian or ubuntu, try running
-'apt-get install libhid-dev' to get the right files installed.
+You are going to need a copy of the libusb-1.0 development files in order to
+build dcled.  If you are running debian, ubuntu or raspberry pi os, try
+running 'apt-get install libusb-1.0-0-dev' to get the right files installed.
 
 Type 'make'.  That should build an executable called 'dcled'.  If that doesnt
 work, try compling it by hand.  There is an install option in the makefile.  If

@@ -1,5 +1,20 @@
 #!/bin/bash
 
+# Standort für die Sonnenauf-/-untergangsberechnung (Bad Salzuflen)
+# Benoetigt das Paket "sunwait" (apt install sunwait)
+LAT="52.0833N"
+LON="8.7667E"
+
+# Nachts (nach Sonnenuntergang bis Sonnenaufgang) nur Helligkeitsstufe 0,
+# tagsueber die uebliche Helligkeit.
+current_brightness() {
+    if [ "$(sunwait poll "$LAT" "$LON")" = "NIGHT" ]; then
+        echo 0
+    else
+        echo 1
+    fi
+}
+
 # Funktion, um die Temperatur zu aktualisieren
 # (hier Platzhalter- steckt bei euch z.B. eine Abfrage an eine Hausautomation)
 update_temperature() {
@@ -46,7 +61,7 @@ temp=""
 
 while true; do
     UhrzeitStunde=$(date +%H)
-    Brightness=1
+    Brightness=$(current_brightness)
     Speed=40
     current=1
 

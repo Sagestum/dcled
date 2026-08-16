@@ -71,8 +71,11 @@ examples/dcled.sh and examples/dcled.service are a working setup that runs
 dcled as a systemd service, cycling between the 24h clock, the weekday
 (abbreviated, e.g. "Mo") and the date ("16.08")- all displayed statically,
 centered on the screen, using --fastprint/-f/-m instead of scrolling text
-in. Adjust the User=/WorkingDirectory=/ExecStart= paths in the .service
-file for your setup, then:
+in. It also dims the display to brightness 0 between sunset and sunrise
+using the "sunwait" package (apt install sunwait); adjust the LAT/LON
+variables at the top of the script for your location. Adjust the
+User=/WorkingDirectory=/ExecStart= paths in the .service file for your
+setup, then:
 
   cp examples/dcled.sh ~/dcled.sh && chmod +x ~/dcled.sh
   sudo cp examples/dcled.service /etc/systemd/system/

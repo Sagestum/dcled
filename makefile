@@ -14,8 +14,8 @@ DIST=dcled-$(DCLEDVERSION)
  
 CC=gcc
 
-CFLAGS= -g -O3 -DFONTDIR='$(FONTDIR)' -DDCLEDVERSION='$(DCLEDVERSION)'
-LDFLAGS= -g -lm -lhid
+CFLAGS= -g -O3 -DFONTDIR='$(FONTDIR)' -DDCLEDVERSION='$(DCLEDVERSION)' $(shell pkg-config --cflags libusb-1.0)
+LDFLAGS= -g -lm $(shell pkg-config --libs libusb-1.0)
  
 # You probaby dont need to change anything below this line...
  

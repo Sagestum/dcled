@@ -1,18 +1,11 @@
 #!/bin/bash
 
-# Standort für die Sonnenauf-/-untergangsberechnung (Bad Salzuflen)
-# Benoetigt das Paket "sunwait" (apt install sunwait)
-LAT="52.0833N"
-LON="8.7667E"
-
 # Nachts (nach Sonnenuntergang bis Sonnenaufgang) nur Helligkeitsstufe 0,
-# tagsueber die uebliche Helligkeit.
+# tagsueber die uebliche Helligkeit. Standort/Koordinaten stehen in
+# sun_brightness.py (dort fuer euren Standort anpassen).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 current_brightness() {
-    if [ "$(sunwait poll "$LAT" "$LON")" = "NIGHT" ]; then
-        echo 0
-    else
-        echo 1
-    fi
+    python3 "$SCRIPT_DIR/sun_brightness.py"
 }
 
 # Funktion, um die Temperatur zu aktualisieren

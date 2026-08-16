@@ -65,6 +65,20 @@ will it will work under other OS's.  If you want to give it a shot, type
 'make udev'.  That will copy the file into place and restart the udev
 subsystem.
 
+RUNNING IT AS A CLOCK:
+
+examples/dcled.sh and examples/dcled.service are a working setup that runs
+dcled as a systemd service, cycling between the 24h clock, the weekday
+(abbreviated, e.g. "Mo") and the date ("16.08")- all displayed statically,
+centered on the screen, using --fastprint/-f/-m instead of scrolling text
+in. Adjust the User=/WorkingDirectory=/ExecStart= paths in the .service
+file for your setup, then:
+
+  cp examples/dcled.sh ~/dcled.sh && chmod +x ~/dcled.sh
+  sudo cp examples/dcled.service /etc/systemd/system/
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now dcled.service
+
 RUNNING IT:
 
 You are going to need read/write access to the mesage board device in order to

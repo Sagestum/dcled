@@ -1,0 +1,13 @@
+[Unit]
+Description=My Miscellaneous Service
+After=network.target
+
+[Service]
+Type=simple
+User=christian
+WorkingDirectory=/home/christian
+ExecStart=/home/christian/dcled.sh
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

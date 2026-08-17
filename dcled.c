@@ -29,6 +29,7 @@
 #include <sys/select.h>
 #include <glob.h>
 #include <ctype.h>
+#include <math.h>
 
 #define VENDOR 0x1d34
 #define PRODUCT 0x0013
@@ -38,6 +39,12 @@
 #define FONTX 5
 #define FONTY 7
 #define MAXTESTPAT 8
+
+/* long-only getopt options (no short-letter equivalent) */
+#define OPT_LAT 1001
+#define OPT_LON 1002
+#define OPT_CLOCKDUR 1003
+#define OPT_FIELDDUR 1004
 
 /* if it isn't defined in the make file... */
 #ifndef FONTDIR
@@ -116,6 +123,11 @@ void scrollsquiggle(struct ledscreen *disp, int isend, int width);
 void printtime(struct ledscreen *disp,int mode);
 void spiral(struct ledscreen *disp);
 void fire(struct ledscreen *disp, int isend);
+void slidemsg(struct ledscreen *disp, char* msg, int dir);
+void holdmsg(struct ledscreen *disp, int seconds);
+int is_daytime(double lat, double lon, time_t now);
+void showclockfor(struct ledscreen *disp, int mode, int seconds, int daybrightness, double lat, double lon, int autobright);
+void clockcyclemode(struct ledscreen *disp, int mode, int clockdur, int fielddur, int daybrightness, double lat, double lon, int autobright);
 struct ledfont *allocfont(void);
 struct ledfont *initfont1(struct ledfont *target);
 struct ledfont *initfont2(struct ledfont *target);
@@ -309,7 +321,8 @@ void printchar(struct ledscreen *disp, char c, int xloc) {
 	f=(char*)disp->font->data;
 	for(y=0;y<(disp->font->dispheight);y++) {
 		for (cx=0,x=xloc;x<LEDSX && cx<=(disp->font->dispwidth);cx++,x++) {
-			disp->led[x][y] = 
+			if (x < 0) continue;
+			disp->led[x][y] =
 				((*(f+(c*FONTY)+y) & (1<<cx))!=0)?  1:disp->led[x][y];
 		}
 	}
@@ -428,6 +441,197 @@ void clockmode(struct ledscreen *disp, int mode, int forever) {
 		printchar(disp,strtime[4],16);
 		send_screen(disp);
 		usleep(100000);
+	}
+}
+
+/* Slide a short message onto the screen from off-canvas, landing in the same
+ * centered spot printmsg() would use. dir 0 slides it in from the left, dir 1
+ * from the right. Frame delay reuses --speed/scrolldelay, same as scrollchar().*/
+void slidemsg(struct ledscreen *disp, char* msg, int dir) {
+
+	char *p = msg;
+	char *q;
+	int i;
+	int pack = 1;
+	int charwidth = (disp->font->dispwidth)-pack;
+	int numchars, start, len, xoffset;
+	int step, shift, startshift;
+
+	numchars = LEDSX / charwidth;
+
+	start = strlen(msg);
+	if (start > 0) {
+		if ((*(msg+start-1)) == '\n') {
+			start = start - numchars -1;
+		} else {
+			start = start - numchars;
+		}
+	}
+	if (start < 0) {
+		start = 0;
+	}
+	p = msg + start;
+	len = strlen(p);
+
+	xoffset = 0;
+	if (start == 0) {
+		xoffset = (LEDSX - len*charwidth) / 2;
+		if (xoffset < 0) {
+			xoffset = 0;
+		}
+	}
+
+	/* LEDSX+1 is comfortably enough off-canvas that the whole message
+	 * starts out hidden regardless of dir. */
+	startshift = LEDSX + 1;
+
+	for (step = startshift; step >= 0; step -= 2) {
+		shift = (dir == 0) ? -step : step;
+		clearscreen(0, disp);
+		for (q = p, i = 0; *q != '\0'; q++, i++) {
+			printchar(disp, *q, xoffset + shift + i*charwidth);
+		}
+		send_screen(disp);
+		usleep(disp->scrolldelay);
+	}
+}
+
+/* Keep resending the current screen for about `seconds`- the device blanks
+ * itself if it isn't refreshed for about a second (see send_screen()). */
+void holdmsg(struct ledscreen *disp, int seconds) {
+
+	time_t start, now;
+	const int refresh = 250000;
+
+	time(&start);
+	do {
+		send_screen(disp);
+		usleep(refresh);
+		time(&now);
+	} while (now - start < seconds);
+}
+
+/* Normalize an angle in degrees into [0,360), matching python's `% 360`. */
+static double norm360(double deg) {
+	double r = fmod(deg, 360.0);
+	if (r < 0) {
+		r += 360.0;
+	}
+	return r;
+}
+
+/* C port of examples/sun_brightness.py (sunrise equation,
+ * https://en.wikipedia.org/wiki/Sunrise_equation). Returns 1 if `now` falls
+ * between sunrise and sunset at lat/lon, 0 otherwise. */
+int is_daytime(double lat, double lon, time_t now) {
+
+	struct tm tmv;
+	int y, m, d, a, y2, m2;
+	double jdn, n, jstar, mean_anomaly, center, ecliptic_lon, jtransit;
+	double sin_dec, phi, cos_hour_angle, hour_angle;
+	double sunrise_jd, sunset_jd, now_jd;
+
+	gmtime_r(&now, &tmv);
+	y = tmv.tm_year + 1900;
+	m = tmv.tm_mon + 1;
+	d = tmv.tm_mday;
+
+	a = (14 - m) / 12;
+	y2 = y + 4800 - a;
+	m2 = m + 12*a - 3;
+	jdn = d + (153*m2+2)/5 + 365*y2 + y2/4 - y2/100 + y2/400 - 32045;
+	n = jdn - 2451545.0 + 0.0008;
+
+	jstar = n - lon/360.0;
+	mean_anomaly = (norm360(357.5291 + 0.98560028*jstar)) * M_PI/180.0;
+	center = 1.9148*sin(mean_anomaly) + 0.0200*sin(2*mean_anomaly) + 0.0003*sin(3*mean_anomaly);
+	ecliptic_lon = norm360(mean_anomaly*180.0/M_PI + 102.9372 + center + 180.0) * M_PI/180.0;
+	jtransit = 2451545.0 + jstar + 0.0053*sin(mean_anomaly) - 0.0069*sin(2*ecliptic_lon);
+
+	sin_dec = sin(ecliptic_lon) * sin(23.4397 * M_PI/180.0);
+	phi = lat * M_PI/180.0;
+	cos_hour_angle = (sin(-0.833 * M_PI/180.0) - sin(phi)*sin_dec) / (cos(phi)*sqrt(1-sin_dec*sin_dec));
+	if (cos_hour_angle > 1.0) cos_hour_angle = 1.0;
+	if (cos_hour_angle < -1.0) cos_hour_angle = -1.0;
+	hour_angle = acos(cos_hour_angle) * 180.0/M_PI;
+
+	sunrise_jd = jtransit - hour_angle/360.0;
+	sunset_jd  = jtransit + hour_angle/360.0;
+
+	now_jd = (double)now / 86400.0 + 2440587.5;
+
+	return (now_jd >= sunrise_jd && now_jd <= sunset_jd) ? 1 : 0;
+}
+
+/* Show the (wiggly-colon) clock for `seconds`. If autobright is set,
+ * disp->brightness is re-derived from lat/lon every 60s: daybrightness during
+ * the day, 0 at night. */
+void showclockfor(struct ledscreen *disp, int mode, int seconds, int daybrightness, double lat, double lon, int autobright) {
+
+	time_t rawtime, firsttime, lastbrightcheck;
+	struct tm* timeinfo;
+	int oddsec;
+	char strtime[6];
+
+	time(&firsttime);
+	rawtime = firsttime;
+	lastbrightcheck = 0;
+
+	while (rawtime - firsttime < seconds) {
+		time(&rawtime);
+
+		if (autobright && (rawtime - lastbrightcheck) >= 60) {
+			disp->brightness = is_daytime(lat, lon, rawtime) ? daybrightness : 0;
+			lastbrightcheck = rawtime;
+		}
+
+		timeinfo = localtime(&rawtime);
+		oddsec = rawtime%2;
+
+		if(mode == 1) {
+			strftime(strtime, 6, "%H:%M", timeinfo);
+		} else {
+			strftime(strtime, 6, "%I:%M", timeinfo);
+		}
+
+		clearscreen(0, disp);
+		printchar(disp,strtime[0],0);
+		printchar(disp,strtime[1],4);
+		printchar(disp,strtime[2],8+oddsec);
+		printchar(disp,strtime[3],12);
+		printchar(disp,strtime[4],16);
+		send_screen(disp);
+		usleep(100000);
+	}
+}
+
+/* Self-contained clock/weekday/date cycle- replaces the old examples/dcled.sh
+ * wrapper. Cycles clock -> weekday (slides in from the right) -> clock ->
+ * date (slides in from the left) -> repeat, forever. */
+void clockcyclemode(struct ledscreen *disp, int mode, int clockdur, int fielddur, int daybrightness, double lat, double lon, int autobright) {
+
+	static const char *german_weekdays[] = {"", "Mo","Di","Mi","Do","Fr","Sa","So"};
+	time_t rawtime;
+	struct tm* timeinfo;
+	char datebuf[6];
+	int iso_wday;
+
+	while (1) {
+		showclockfor(disp, mode, clockdur, daybrightness, lat, lon, autobright);
+
+		time(&rawtime);
+		timeinfo = localtime(&rawtime);
+		iso_wday = (timeinfo->tm_wday == 0) ? 7 : timeinfo->tm_wday;
+		slidemsg(disp, (char*)german_weekdays[iso_wday], 1 /* from the right */);
+		holdmsg(disp, fielddur);
+
+		showclockfor(disp, mode, clockdur, daybrightness, lat, lon, autobright);
+
+		time(&rawtime);
+		timeinfo = localtime(&rawtime);
+		strftime(datebuf, 6, "%d.%m", timeinfo);
+		slidemsg(disp, datebuf, 0 /* from the left */);
+		holdmsg(disp, fielddur);
 	}
 }
 
@@ -1198,6 +1402,12 @@ int main (int argc, char **argv) {
 	int preamble=0;
 	int dfont=0;
 	int clock=0;
+	int cycle=0;
+	double lat=0.0;
+	double lon=0.0;
+	int autobright=0;
+	int clockdur=15;
+	int fielddur=3;
 	char *fontdir = FONTDIR;
 	char *fontname = NULL;
 	int printhelp = 0;
@@ -1222,13 +1432,18 @@ int main (int argc, char **argv) {
 		{ "font",	optional_argument,	0, 'g' },
 		{ "fontdir",	optional_argument,	0, 'G' },
 		{ "test",	no_argument,	0, 't' },
+		{ "cycle",	no_argument,	0, 'y' },
+		{ "lat",	required_argument,	0, OPT_LAT },
+		{ "lon",	required_argument,	0, OPT_LON },
+		{ "clockdur",	required_argument,	0, OPT_CLOCKDUR },
+		{ "fielddur",	required_argument,	0, OPT_FIELDDUR },
 		{ 0,0,0,0 }
 	};
 
 	atexit(bye);
 
 	while (1) {
-		getoptc = getopt_long (argc, argv, "ho:m:b:s:p:g:G:dtrfencCB", 
+		getoptc = getopt_long (argc, argv, "ho:m:b:s:p:g:G:dtrfencCBy",
 			long_options, &option_index
 		);
 
@@ -1315,6 +1530,31 @@ int main (int argc, char **argv) {
 			case 'B':
 				clock = 3;
 				break;
+			case 'y':
+				cycle = 1;
+				break;
+			case OPT_LAT:
+				if (optarg != NULL) {
+					lat = atof(optarg);
+					autobright = 1;
+				}
+				break;
+			case OPT_LON:
+				if (optarg != NULL) {
+					lon = atof(optarg);
+					autobright = 1;
+				}
+				break;
+			case OPT_CLOCKDUR:
+				if (optarg != NULL) {
+					clockdur = atoi(optarg);
+				}
+				break;
+			case OPT_FIELDDUR:
+				if (optarg != NULL) {
+					fielddur = atoi(optarg);
+				}
+				break;
 		}
 	}
 
@@ -1341,6 +1581,17 @@ int main (int argc, char **argv) {
 		fprintf(stdout,"\t--test        -t   Output a test pattern\n");
 		fprintf(stdout,"\t--font        -g   Select a font\n");
 		fprintf(stdout,"\t--fontdir     -G   Select a font directory\n");
+		fprintf(stdout,"\t--cycle       -y   Cycle 24h clock / weekday / date, sliding\n");
+		fprintf(stdout,"\t                   the weekday in from the right and the date\n");
+		fprintf(stdout,"\t                   in from the left. Runs forever.\n");
+		fprintf(stdout,"\t--lat              Latitude for --cycle auto-dimming\n");
+		fprintf(stdout,"\t--lon              Longitude for --cycle auto-dimming.\n");
+		fprintf(stdout,"\t                   Giving both --lat and --lon dims the\n");
+		fprintf(stdout,"\t                   display to brightness 0 between sunset\n");
+		fprintf(stdout,"\t                   and sunrise, and to -b (default 2)\n");
+		fprintf(stdout,"\t                   otherwise.\n");
+		fprintf(stdout,"\t--clockdur         Seconds to show the clock per --cycle lap (default 15)\n");
+		fprintf(stdout,"\t--fielddur         Seconds to show weekday/date per --cycle lap (default 3)\n");
 		fprintf(stdout,"\n");
 		fprintf(stdout,"Available preamble graphics:\n\n");
 		preamble = 1;
@@ -1425,6 +1676,13 @@ int main (int argc, char **argv) {
 		fprintf(stdout,"font directory is %s\n",FONTDIR);
 		disp->scrolldelay = 100000;
 		fancytest(disp,fontlist);
+		exit(0);
+	}
+
+	if(cycle) {
+		/* 24h by default, like the old dcled.sh did; -c switches to 12h. */
+		int cyclemode = (clock==2) ? 2 : 1;
+		clockcyclemode(disp,cyclemode,clockdur,fielddur,brightness,lat,lon,autobright);
 		exit(0);
 	}
 

@@ -67,18 +67,20 @@ subsystem.
 
 RUNNING IT AS A CLOCK:
 
-examples/dcled.sh and examples/dcled.service are a working setup that runs
-dcled as a systemd service, cycling between the 24h clock, the weekday
-(abbreviated, e.g. "Mo") and the date ("16.08")- all displayed statically,
-centered on the screen, using --fastprint/-f/-m instead of scrolling text
-in. It also dims the display to brightness 0 between sunset and sunrise,
-computed by examples/sun_brightness.py (pure Python stdlib, no extra
-packages or network access needed); adjust the LAT/LON constants at the
-top of that script for your location. Adjust the
-User=/WorkingDirectory=/ExecStart= paths in the .service file for your
-setup, then:
+--cycle/-y runs dcled itself as a self-contained clock: it cycles forever
+between the 24h clock, the weekday (abbreviated, e.g. "Mo") and the date
+("16.08"), sliding the weekday in from the right and the date in from the
+left instead of just cutting between them. --clockdur and --fielddur
+control how many seconds each of those gets per lap (defaults 15 and 3).
+Pass --lat and --lon and it will also dim the display to brightness 0
+between sunset and sunrise (using -b, default 2, as the daytime
+brightness), computed in C from the sunrise equation- no Python or
+network access needed at runtime.
 
-  cp examples/dcled.sh examples/sun_brightness.py ~/ && chmod +x ~/dcled.sh
+examples/dcled.service is a working systemd unit for this. Adjust the
+User=/WorkingDirectory=/ExecStart= (including your own --lat/--lon) for
+your setup, then:
+
   sudo cp examples/dcled.service /etc/systemd/system/
   sudo systemctl daemon-reload
   sudo systemctl enable --now dcled.service
@@ -107,6 +109,18 @@ Usage- ./dcled [opts] [files]
         --fastprint   -f   Jump to end of message.
         --speed       -s   General delay in ms
         --test        -t   Output a test pattern
+        --font        -g   Select a font
+        --fontdir     -G   Select a font directory
+        --cycle       -y   Cycle 24h clock / weekday / date, sliding the
+                           weekday in from the right and the date in from
+                           the left. Runs forever.
+        --lat              Latitude for --cycle auto-dimming
+        --lon              Longitude for --cycle auto-dimming. Giving both
+                           --lat and --lon dims the display to brightness 0
+                           between sunset and sunrise, and to -b (default 2)
+                           otherwise.
+        --clockdur         Seconds to show the clock per --cycle lap (default 15)
+        --fielddur         Seconds to show weekday/date per --cycle lap (default 3)
 
 Available preamble graphics:
 
@@ -145,6 +159,11 @@ dcled f1 f2
 If you want to have dcled run as a clock all the time, try adding using the clock and repeat options.
 
 dcled --clock --repeat
+
+Or, to cycle between the clock, weekday and date with sun-based
+auto-dimming (see RUNNING IT AS A CLOCK above):
+
+dcled --cycle --lat 52.0833 --lon 8.7667
 
 As of dcled 1.6, you can call the preamble type either by number or by name:
 

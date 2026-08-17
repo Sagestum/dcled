@@ -6,7 +6,7 @@ After=network.target
 Type=simple
 User=christian
 WorkingDirectory=/home/christian
-ExecStart=/home/christian/dcled.sh
+ExecStart=/usr/local/bin/dcled --cycle --lat 52.0833 --lon 8.7667
 Restart=always
 
 [Install]

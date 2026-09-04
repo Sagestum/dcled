@@ -123,8 +123,9 @@ void scrollsquiggle(struct ledscreen *disp, int isend, int width);
 void printtime(struct ledscreen *disp,int mode);
 void spiral(struct ledscreen *disp);
 void fire(struct ledscreen *disp, int isend);
-void slidemsg(struct ledscreen *disp, char* msg, int dir);
 void holdmsg(struct ledscreen *disp, int seconds);
+void panclock(struct ledscreen *disp, char *strtime, int oddsec, char *text, int dir, int toText);
+void currentclockstr(int mode, char *strtime, int *oddsec);
 int is_daytime(double lat, double lon, time_t now);
 void showclockfor(struct ledscreen *disp, int mode, int seconds, int daybrightness, double lat, double lon, int autobright);
 void clockcyclemode(struct ledscreen *disp, int mode, int clockdur, int fielddur, int daybrightness, double lat, double lon, int autobright);
@@ -444,10 +445,21 @@ void clockmode(struct ledscreen *disp, int mode, int forever) {
 	}
 }
 
-/* Slide a short message onto the screen from off-canvas, landing in the same
- * centered spot printmsg() would use. dir 0 slides it in from the left, dir 1
- * from the right. Frame delay reuses --speed/scrolldelay, same as scrollchar().*/
-void slidemsg(struct ledscreen *disp, char* msg, int dir) {
+/* Draw the wiggly-colon clock, shifted xshift pixels from its normal
+ * centered position. Used both at rest (xshift 0, see showclockfor()) and
+ * mid-pan in panclock() below. */
+void drawclockpanel(struct ledscreen *disp, char *strtime, int oddsec, int xshift) {
+
+	printchar(disp,strtime[0],0+xshift);
+	printchar(disp,strtime[1],4+xshift);
+	printchar(disp,strtime[2],8+oddsec+xshift);
+	printchar(disp,strtime[3],12+xshift);
+	printchar(disp,strtime[4],16+xshift);
+}
+
+/* Draw a short message, shifted xshift pixels from the same centered spot
+ * printmsg() would use. */
+void drawtextpanel(struct ledscreen *disp, char *msg, int xshift) {
 
 	char *p = msg;
 	char *q;
@@ -455,7 +467,6 @@ void slidemsg(struct ledscreen *disp, char* msg, int dir) {
 	int pack = 1;
 	int charwidth = (disp->font->dispwidth)-pack;
 	int numchars, start, len, xoffset;
-	int step, shift, startshift;
 
 	numchars = LEDSX / charwidth;
 
@@ -481,19 +492,54 @@ void slidemsg(struct ledscreen *disp, char* msg, int dir) {
 		}
 	}
 
-	/* LEDSX+1 is comfortably enough off-canvas that the whole message
-	 * starts out hidden regardless of dir. */
-	startshift = LEDSX + 1;
-
-	for (step = startshift; step >= 0; step -= 2) {
-		shift = (dir == 0) ? -step : step;
-		clearscreen(0, disp);
-		for (q = p, i = 0; *q != '\0'; q++, i++) {
-			printchar(disp, *q, xoffset + shift + i*charwidth);
-		}
-		send_screen(disp);
-		usleep(disp->scrolldelay);
+	for (q = p, i = 0; *q != '\0'; q++, i++) {
+		printchar(disp, *q, xoffset + xshift + i*charwidth);
 	}
+}
+
+/* Pan the display between the centered clock and a text panel (date or
+ * weekday) sitting immediately to one side of it, as if swiping between two
+ * of three side-by-side screens laid out [date][clock][weekday]. dir 0
+ * means the text panel is the one to the left (date), dir 1 to the right
+ * (weekday). toText 1 pans from the centered clock over to the text panel;
+ * toText 0 pans back from the text panel to the centered clock. Both panels
+ * move together in the same direction, like a single continuous filmstrip,
+ * rather than one popping away while the other slides in. Runs at a fixed,
+ * deliberately slow pace so the motion is actually visible, independent of
+ * --speed/scrolldelay. */
+void panclock(struct ledscreen *disp, char *strtime, int oddsec, char *text, int dir, int toText) {
+
+	const int framedelay = 60000;
+	int w = LEDSX + 1;
+	int textcenter = (dir == 0) ? -w : w;
+	int from = toText ? 0 : textcenter;
+	int to = toText ? textcenter : 0;
+	int frames = w;
+	int i, viewport, clockshift, textshift;
+
+	for (i = 0; i <= frames; i++) {
+		viewport = from + (to - from) * i / frames;
+		clockshift = -viewport;
+		textshift = textcenter - viewport;
+		clearscreen(0, disp);
+		drawclockpanel(disp, strtime, oddsec, clockshift);
+		drawtextpanel(disp, text, textshift);
+		send_screen(disp);
+		usleep(framedelay);
+	}
+}
+
+/* Snapshot of what showclockfor()'s clock currently looks like, so a pan
+ * transition can pick up right where the at-rest display left off. */
+void currentclockstr(int mode, char *strtime, int *oddsec) {
+
+	time_t rawtime;
+	struct tm *timeinfo;
+
+	time(&rawtime);
+	timeinfo = localtime(&rawtime);
+	*oddsec = rawtime % 2;
+	strftime(strtime, 6, (mode == 1 ? "%H:%M" : "%I:%M"), timeinfo);
 }
 
 /* Keep resending the current screen for about `seconds`- the device blanks
@@ -606,32 +652,42 @@ void showclockfor(struct ledscreen *disp, int mode, int seconds, int daybrightne
 }
 
 /* Self-contained clock/weekday/date cycle- replaces the old examples/dcled.sh
- * wrapper. Cycles clock -> weekday (slides in from the right) -> clock ->
- * date (slides in from the left) -> repeat, forever. */
+ * wrapper. Treats the display as three side-by-side screens, [date][clock]
+ * [weekday], and pans between them: clock -> pan left to date -> pan back to
+ * clock -> pan right to weekday -> pan back to clock -> repeat. */
 void clockcyclemode(struct ledscreen *disp, int mode, int clockdur, int fielddur, int daybrightness, double lat, double lon, int autobright) {
 
 	static const char *german_weekdays[] = {"", "Mo","Di","Mi","Do","Fr","Sa","So"};
 	time_t rawtime;
 	struct tm* timeinfo;
 	char datebuf[6];
-	int iso_wday;
+	char strtime[6];
+	int iso_wday, oddsec;
 
 	while (1) {
 		showclockfor(disp, mode, clockdur, daybrightness, lat, lon, autobright);
 
 		time(&rawtime);
 		timeinfo = localtime(&rawtime);
-		iso_wday = (timeinfo->tm_wday == 0) ? 7 : timeinfo->tm_wday;
-		slidemsg(disp, (char*)german_weekdays[iso_wday], 1 /* from the right */);
+		strftime(datebuf, 6, "%d.%m", timeinfo);
+
+		currentclockstr(mode, strtime, &oddsec);
+		panclock(disp, strtime, oddsec, datebuf, 0 /* date is to the left */, 1 /* to date */);
 		holdmsg(disp, fielddur);
+		currentclockstr(mode, strtime, &oddsec);
+		panclock(disp, strtime, oddsec, datebuf, 0, 0 /* back to clock */);
 
 		showclockfor(disp, mode, clockdur, daybrightness, lat, lon, autobright);
 
 		time(&rawtime);
 		timeinfo = localtime(&rawtime);
-		strftime(datebuf, 6, "%d.%m", timeinfo);
-		slidemsg(disp, datebuf, 0 /* from the left */);
+		iso_wday = (timeinfo->tm_wday == 0) ? 7 : timeinfo->tm_wday;
+
+		currentclockstr(mode, strtime, &oddsec);
+		panclock(disp, strtime, oddsec, (char*)german_weekdays[iso_wday], 1 /* weekday is to the right */, 1 /* to weekday */);
 		holdmsg(disp, fielddur);
+		currentclockstr(mode, strtime, &oddsec);
+		panclock(disp, strtime, oddsec, (char*)german_weekdays[iso_wday], 1, 0 /* back to clock */);
 	}
 }
 
